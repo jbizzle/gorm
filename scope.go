@@ -6,9 +6,12 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"log"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +27,9 @@ type Scope struct {
 	skipLeft        bool
 	fields          *[]*Field
 	selectAttrs     *[]string
+
+	fieldsLock  sync.Mutex
+	fieldsCalls fieldsCalls
 }
 
 // IndirectValue return scope's reflect value's indirect value
@@ -102,8 +108,49 @@ func (scope *Scope) SkipLeft() {
 	scope.skipLeft = true
 }
 
+type fieldsCall struct {
+	stack string
+}
+
+type fieldsCalls struct {
+	calls map[*fieldsCall]struct{}
+}
+
+func (c *fieldsCalls) addCall(call *fieldsCall, scope *Scope) {
+	scope.fieldsLock.Lock()
+	defer scope.fieldsLock.Unlock()
+	if c.calls == nil {
+		c.calls = make(map[*fieldsCall]struct{})
+	}
+	c.calls[call] = struct{}{}
+	if len(c.calls) > 1 {
+		var stacks []string
+		for call := range c.calls {
+			stacks = append(stacks, call.stack)
+		}
+		sort.Strings(stacks)
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%d calls arrived for Fields()\n", len(c.calls)))
+		for _, stack := range stacks {
+			sb.WriteString(fmt.Sprintf("---------------\n%s\n", stack))
+		}
+		log.Print(sb.String())
+	}
+}
+
+func (c *fieldsCalls) removeCall(call *fieldsCall, scope *Scope) {
+	scope.fieldsLock.Lock()
+	defer scope.fieldsLock.Unlock()
+	delete(c.calls, call)
+}
+
 // Fields get value's fields
 func (scope *Scope) Fields() []*Field {
+	//	scope.fieldsLock.Lock()
+	//	defer scope.fieldsLock.Unlock()
+	//	call := fieldsCall{stack: string(debug.Stack())}
+	//	scope.fieldsCalls.addCall(&call, scope)
+	//	defer scope.fieldsCalls.removeCall(&call, scope)
 	if scope.fields == nil {
 		var (
 			fields             []*Field
